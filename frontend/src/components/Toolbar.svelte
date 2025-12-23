@@ -1,6 +1,10 @@
 <script>
   import { code, output, isRunning, layout, currentProject } from '../stores/app.js';
   import { RunTinker } from '../../wailsjs/go/main/App.js';
+  import { Button } from '../lib/components/ui/button';
+  import { createEventDispatcher } from 'svelte';
+
+  const dispatch = createEventDispatcher();
 
   async function runCode() {
     console.log('[Toolbar] runCode called');
@@ -39,120 +43,51 @@
       runCode();
     }
   }
+
+  function openSettings() {
+    dispatch('settings');
+  }
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="toolbar">
-  <div class="left">
-    <button class="run-btn" on:click={runCode} disabled={$isRunning || !$currentProject}>
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M8 5v14l11-7z"/>
+<div class="flex items-center justify-between border-b border-border bg-background/70 px-4 py-2">
+  <div class="flex items-center gap-3">
+    <Button class="gap-2" on:click={runCode} disabled={$isRunning || !$currentProject}>
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M8 5v14l11-7z" />
       </svg>
       {$isRunning ? 'Running...' : 'Run'}
-    </button>
-    <span class="shortcut">⌘ + Enter</span>
+    </Button>
+    <span class="hidden text-xs text-muted-foreground sm:inline">⌘ + Enter</span>
   </div>
 
-  <div class="center">
+  <div class="flex items-center gap-3">
     {#if $currentProject}
-      <span class="project-name">{$currentProject.name}</span>
+      <span class="truncate text-sm font-medium text-foreground/90 max-w-[180px] sm:max-w-xs">
+        {$currentProject.name}
+      </span>
     {:else}
-      <span class="no-project">No project selected</span>
+      <span class="text-sm text-muted-foreground">No project selected</span>
     {/if}
+    <Button variant="outline" size="icon" on:click={toggleLayout} title="Toggle Layout">
+      {#if $layout === 'horizontal'}
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="12" y1="3" x2="12" y2="21" />
+        </svg>
+      {:else}
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="3" y1="12" x2="21" y2="12" />
+        </svg>
+      {/if}
+    </Button>
+    <Button variant="ghost" size="icon" on:click={openSettings} title="Settings">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path>
+      </svg>
+    </Button>
   </div>
-  
-  <button class="layout-btn" on:click={toggleLayout} title="Toggle Layout">
-    {#if $layout === 'horizontal'}
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="3" y="3" width="18" height="18" rx="2"/>
-        <line x1="12" y1="3" x2="12" y2="21"/>
-      </svg>
-    {:else}
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="3" y="3" width="18" height="18" rx="2"/>
-        <line x1="3" y1="12" x2="21" y2="12"/>
-      </svg>
-    {/if}
-  </button>
 </div>
-
-<style>
-  .toolbar {
-    height: 40px;
-    background: #252526;
-    border-bottom: 1px solid #333;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 12px;
-  }
-
-  .left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .center {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-  }
-
-  .project-name {
-    font-size: 12px;
-    color: #888;
-  }
-
-  .no-project {
-    font-size: 12px;
-    color: #555;
-    font-style: italic;
-  }
-
-  .shortcut {
-    font-size: 11px;
-    color: #555;
-  }
-
-  .run-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: #f55247;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .run-btn:hover:not(:disabled) {
-    background: #ff6b5b;
-  }
-
-  .run-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .layout-btn {
-    padding: 6px;
-    background: transparent;
-    color: #888;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .layout-btn:hover {
-    background: #333;
-    color: #ccc;
-  }
-</style>
