@@ -6,6 +6,8 @@ export function AddProject(arg1:string,arg2:string):Promise<main.Project>;
 
 export function GetProjects():Promise<Array<main.Project>>;
 
+export function GetSettings():Promise<main.Settings>;
+
 export function RemoveProject(arg1:string):Promise<void>;
 
 export function RunTinker(arg1:string,arg2:string):Promise<string>;
@@ -13,3 +15,5 @@ export function RunTinker(arg1:string,arg2:string):Promise<string>;
 export function RunTinkerStreaming(arg1:string,arg2:string):Promise<string>;
 
 export function SelectDirectory():Promise<string>;
+
+export function UpdateSettings(arg1:main.Settings):Promise<void>;

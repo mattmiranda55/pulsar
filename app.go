@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 type App struct {
 	ctx      context.Context
 	projects []Project
+	settings Settings
 	mu       sync.RWMutex
 }
 
@@ -31,10 +33,20 @@ type Project struct {
 	Path string `json:"path"`
 }
 
+// Settings represents user preferences
+type Settings struct {
+	Theme   string `json:"theme"`
+	PHPPath string `json:"phpPath"`
+}
+
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{
 		projects: []Project{},
+		settings: Settings{
+			Theme:   "dark",
+			PHPPath: "",
+		},
 	}
 }
 
@@ -43,6 +55,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	log.Println("[Startup] App starting...")
 	a.loadProjects()
+	a.loadSettings()
 	log.Printf("[Startup] Loaded %d projects", len(a.projects))
 }
 
@@ -83,11 +96,77 @@ func (a *App) saveProjects() {
 	log.Printf("[SaveProjects] Saved %d projects to: %s", len(a.projects), configPath)
 }
 
+func (a *App) getSettingsPath() string {
+	homeDir, _ := os.UserHomeDir()
+	configDir := filepath.Join(homeDir, ".pulsar")
+	os.MkdirAll(configDir, 0755)
+	return filepath.Join(configDir, "settings.json")
+}
+
+func (a *App) loadSettings() {
+	settingsPath := a.getSettingsPath()
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		log.Printf("[LoadSettings] No settings file yet, using defaults: %v", err)
+		return
+	}
+	var settings Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		log.Printf("[LoadSettings] Error parsing settings: %v", err)
+		return
+	}
+	a.mu.Lock()
+	a.settings = settings
+	a.mu.Unlock()
+	log.Printf("[LoadSettings] Loaded settings: %+v", settings)
+}
+
+func (a *App) saveSettings() {
+	settingsPath := a.getSettingsPath()
+	data, err := json.MarshalIndent(a.settings, "", "  ")
+	if err != nil {
+		log.Printf("[SaveSettings] Error marshaling settings: %v", err)
+		return
+	}
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		log.Printf("[SaveSettings] Error writing settings: %v", err)
+		return
+	}
+	log.Printf("[SaveSettings] Saved settings to: %s", settingsPath)
+}
+
 // GetProjects returns all saved projects
 func (a *App) GetProjects() []Project {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.projects
+}
+
+// GetSettings returns current settings
+func (a *App) GetSettings() Settings {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.settings
+}
+
+// UpdateSettings persists settings and updates runtime values
+func (a *App) UpdateSettings(settings Settings) {
+	log.Printf("[UpdateSettings] Received settings: %+v", settings)
+
+	// Normalize theme
+	if settings.Theme != "dark" && settings.Theme != "light" {
+		settings.Theme = "dark"
+	}
+	settings.PHPPath = strings.TrimSpace(settings.PHPPath)
+
+	a.mu.Lock()
+	a.settings = settings
+	a.mu.Unlock()
+
+	// Surface current theme to the frontend (for native menus, etc.)
+	runtime.EventsEmit(a.ctx, "settings:theme", settings.Theme)
+
+	a.saveSettings()
 }
 
 // SelectDirectory opens a directory picker dialog
@@ -162,29 +241,31 @@ func (a *App) RunTinker(projectPath, code string) string {
 		return "Error: Invalid Laravel project path"
 	}
 
+	phpPath, err := a.resolvePHPBinary(projectPath)
+	if err != nil {
+		log.Printf("[RunTinker] Error resolving PHP binary: %v", err)
+		return fmt.Sprintf("Error: %s", err)
+	}
+	log.Printf("[RunTinker] Using PHP binary: %s", phpPath)
+
 	// Clean code (remove <?php tag as tinker doesn't need it)
 	cleanCode := strings.TrimPrefix(strings.TrimSpace(code), "<?php")
 	cleanCode = strings.TrimSpace(cleanCode)
 	log.Printf("[RunTinker] Cleaned code: %s", cleanCode)
 
-	// Write code to a temp file for more reliable execution
-	tmpFile, err := os.CreateTemp("", "tinker-*.php")
+	cmd := exec.CommandContext(ctx, phpPath, "artisan", "tinker")
+	cmd.Dir = projectPath
+
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		log.Printf("[RunTinker] Error creating temp file: %v", err)
+		log.Printf("[RunTinker] Error opening stdin: %v", err)
 		return fmt.Sprintf("Error: %s", err)
 	}
-	defer os.Remove(tmpFile.Name())
 
-	// Write the code to temp file (no <?php tag - tinker doesn't want it)
-	tmpFile.WriteString(cleanCode + "\n")
-	tmpFile.Close()
-	log.Printf("[RunTinker] Wrote code to temp file: %s", tmpFile.Name())
-
-	// Run tinker with the temp file using shell piping
-	shellCmd := fmt.Sprintf("cat %s | php artisan tinker 2>&1", tmpFile.Name())
-	cmd := exec.CommandContext(ctx, "bash", "-c", shellCmd)
-	cmd.Dir = projectPath
-	log.Printf("[RunTinker] Running command: %s", shellCmd)
+	go func() {
+		defer stdin.Close()
+		io.WriteString(stdin, cleanCode+"\n")
+	}()
 
 	output, err := cmd.CombinedOutput()
 	log.Printf("[RunTinker] Command output: %s, err: %v", string(output), err)
@@ -201,7 +282,7 @@ func (a *App) RunTinker(projectPath, code string) string {
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		log.Printf("[RunTinker] Line %d: raw=%q trimmed=%q", i, line, trimmed)
-		
+
 		// Strip leading prompt characters (> or .)
 		cleaned := trimmed
 		for strings.HasPrefix(cleaned, "> ") || strings.HasPrefix(cleaned, ". ") {
@@ -209,7 +290,7 @@ func (a *App) RunTinker(projectPath, code string) string {
 			cleaned = strings.TrimPrefix(cleaned, ". ")
 			cleaned = strings.TrimSpace(cleaned)
 		}
-		
+
 		// Skip empty, shell info, and echoed code lines
 		if cleaned == "" || cleaned == "." ||
 			strings.Contains(cleaned, "Psy Shell") ||
@@ -217,7 +298,7 @@ func (a *App) RunTinker(projectPath, code string) string {
 			log.Printf("[RunTinker] Skipping line")
 			continue
 		}
-		
+
 		// Check if this is a result line (starts with "= ")
 		if strings.HasPrefix(cleaned, "= ") {
 			val := strings.TrimPrefix(cleaned, "= ")
@@ -244,7 +325,13 @@ func (a *App) RunTinkerStreaming(projectPath, code string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "php", "artisan", "tinker")
+	phpPath, err := a.resolvePHPBinary(projectPath)
+	if err != nil {
+		return fmt.Sprintf("Error: %s", err)
+	}
+	log.Printf("[RunTinkerStreaming] Using PHP binary: %s", phpPath)
+
+	cmd := exec.CommandContext(ctx, phpPath, "artisan", "tinker")
 	cmd.Dir = projectPath
 
 	stdin, _ := cmd.StdinPipe()
@@ -273,4 +360,63 @@ func (a *App) RunTinkerStreaming(projectPath, code string) string {
 
 	cmd.Wait()
 	return strings.TrimSpace(result.String())
+}
+
+// resolvePHPBinary tries to locate the PHP executable closest to the project (Herd/local first).
+func (a *App) resolvePHPBinary(projectPath string) (string, error) {
+	var candidates []string
+
+	a.mu.RLock()
+	currentSettings := a.settings
+	a.mu.RUnlock()
+
+	// 1) Project-local shims (Herd preferred)
+	candidates = append(candidates,
+		filepath.Join(projectPath, ".herd", "bin", "php"),
+		filepath.Join(projectPath, ".config", "herd", "bin", "php"),
+	)
+
+	// 2) Project vendor-provided php (non-Herd)
+	candidates = append(candidates, filepath.Join(projectPath, "vendor", "bin", "php"))
+
+	// 3) User-level Herd installation (macOS/Linux default)
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(homeDir, ".config", "herd", "bin", "php"))
+	}
+
+	switch goruntime.GOOS {
+	case "darwin":
+		// 4) macOS Herd app bundle path
+		candidates = append(candidates, "/Applications/Herd.app/Contents/Resources/bin/php")
+	case "windows":
+		// 4) Windows Herd default locations (best-effort)
+		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+			candidates = append(candidates, filepath.Join(localAppData, "Herd", "bin", "php.exe"))
+		}
+		candidates = append(candidates, `C:\Program Files\Herd\bin\php.exe`)
+	}
+
+	// 5) Explicit overrides (for non-Herd projects or specific versions)
+	if currentSettings.PHPPath != "" {
+		candidates = append(candidates, currentSettings.PHPPath)
+	}
+	if envPath := strings.TrimSpace(os.Getenv("PULSAR_PHP_PATH")); envPath != "" {
+		candidates = append(candidates, envPath)
+	}
+
+	// 6) Fallback to PATH if nothing else is found
+	if pathLookup, err := exec.LookPath("php"); err == nil {
+		candidates = append(candidates, pathLookup)
+	}
+
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("unable to find PHP executable; set PULSAR_PHP_PATH or configure an explicit binary in Settings")
 }
